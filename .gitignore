@@ -1,0 +1,18 @@
+# ── Swift / SPM ──
+.build/
+.swiftpm/
+
+# ── macOS ──
+.DS_Store
+*.dmg
+MDmaker.app/
+
+# ── IDE ──
+.vscode/
+.idea/
+*.xcworkspace
+xcuserdata/
+
+# ── 缓存 ──
+*.pyc
+__pycache__/
