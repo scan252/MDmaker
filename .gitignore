@@ -2,6 +2,12 @@
 .build/
 .swiftpm/
 
+# ── Reasonix 会话状态 ──
+.reasonix/
+
+# ── 测试发布目录 ──
+MDmaker-测试发布/
+
 # ── macOS ──
 .DS_Store
 *.dmg
