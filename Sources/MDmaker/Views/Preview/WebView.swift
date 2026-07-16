@@ -2,33 +2,79 @@ import SwiftUI
 import WebKit
 
 struct WebView: NSViewRepresentable {
-    let htmlContent: String
+    let htmlBody: String
+    let css: String
+    let baseURL: URL?
 
     func makeNSView(context: Context) -> WKWebView {
         let config = WKWebViewConfiguration()
         let webView = WKWebView(frame: .zero, configuration: config)
-        webView.setValue(false, forKey: "drawsBackground")
-        webView.loadHTMLString(htmlContent, baseURL: nil)
+        webView.underPageBackgroundColor = .clear
+        webView.navigationDelegate = context.coordinator
+        let fullHTML = HTMLTemplate.document(withBody: htmlBody, css: css)
+        webView.loadHTMLString(fullHTML, baseURL: baseURL)
+        context.coordinator.loadedBaseURL = baseURL
+        context.coordinator.pendingBody = htmlBody
+        context.coordinator.isFirstLoad = true
         return webView
     }
 
     func updateNSView(_ nsView: WKWebView, context: Context) {
-        // 从完整 HTML 中提取 body 内容，保留 head 里的 CSS
-        let bodyContent = extractBodyContent(from: htmlContent)
-        let escapedContent = bodyContent
-            .replacingOccurrences(of: "\\", with: "\\\\")
-            .replacingOccurrences(of: "`", with: "\\`")
-            .replacingOccurrences(of: "$", with: "\\$")
-        let js = "document.body.innerHTML = `\(escapedContent)`;"
-        nsView.evaluateJavaScript(js) { _, _ in }
+        if context.coordinator.loadedBaseURL != baseURL {
+            let fullHTML = HTMLTemplate.document(withBody: htmlBody, css: css)
+            nsView.loadHTMLString(fullHTML, baseURL: baseURL)
+            context.coordinator.loadedBaseURL = baseURL
+            context.coordinator.pendingBody = htmlBody
+            context.coordinator.isFirstLoad = true
+            return
+        }
+        if context.coordinator.pendingBody == htmlBody { return }
+        if context.coordinator.isFirstLoad {
+            context.coordinator.pendingBody = htmlBody
+            return
+        }
+        context.coordinator.pendingBody = htmlBody
+        injectBody(into: nsView)
     }
 
-    /// 从完整 HTML 字符串中提取 <body>...</body> 之间的内容
-    private func extractBodyContent(from html: String) -> String {
-        guard let bodyStart = html.range(of: "<body>"),
-              let bodyEnd = html.range(of: "</body>") else {
-            return html
+    private func injectBody(into webView: WKWebView) {
+        guard let jsonData = try? JSONSerialization.data(withJSONObject: [htmlBody], options: []),
+              let jsonString = String(data: jsonData, encoding: .utf8) else { return }
+        let js = """
+        (function() {
+            try { document.body.innerHTML = (\(jsonString))[0]; }
+            catch(e) { console.error('预览渲染失败', e); }
+        })();
+        """
+        webView.evaluateJavaScript(js) { _, _ in }
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    final class Coordinator: NSObject, WKNavigationDelegate {
+        var loadedBaseURL: URL?
+        var pendingBody: String = ""
+        var isFirstLoad = true
+
+        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+            if isFirstLoad {
+                isFirstLoad = false
+                if !pendingBody.isEmpty {
+                    let js = """
+                    (function() {
+                        try { document.body.innerHTML = (\(Self.jsonEncode(pendingBody))); }
+                        catch(e) { console.error('预览渲染失败', e); }
+                    })();
+                    """
+                    webView.evaluateJavaScript(js) { _, _ in }
+                }
+            }
         }
-        return String(html[bodyStart.upperBound..<bodyEnd.lowerBound])
+
+        private static func jsonEncode(_ string: String) -> String {
+            guard let data = try? JSONSerialization.data(withJSONObject: [string], options: []),
+                  let result = String(data: data, encoding: .utf8) else { return "[\"\"]" }
+            return result
+        }
     }
 }
